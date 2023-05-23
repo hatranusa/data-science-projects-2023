@@ -1,0 +1,292 @@
+---
+title: "2019 Revenue Analysis on Apple Mobile Games"
+author: "Ha Tran"
+date: "`r Sys.Date()`"
+output:
+  html_notebook:
+    toc: yes
+    toc_depth: 4
+  html_document:
+    code_folding: hide
+    theme: cerulean
+    toc: yes
+    toc_depth: '4'
+    toc_float: yes
+  pdf_document:
+    toc: yes
+    toc_depth: '4'
+---
+
+## Object:
+By the end of 2019, the mobile gaming sector reaches \$68.5 billion, covering 45% of the global game market. To exploit tremendous opportunities from this market, game developers need to have an overall view of the market.\
+The main object of this project is to conduct an Exploratory Data Analysis to expose the factors that might affect a game revenue, which can determine by the two main metrics: the average user rating and the rating count.
+
+```{r loadPackages, message=FALSE, warning=FALSE, include=FALSE, results='hide'}
+if(!require("pacman")) install.packages("pacman")
+pacman::p_load(tidyverse, plyr, fastDummies, reshape2, RColorBrewer,lubridate, grid, gridExtra, caret,MASS)
+theme_set(theme_classic())
+```
+
+```{r readData, include=FALSE}
+## Read Appstore_games data
+app_game.df <- read_csv(file.choose(),col_types = cols("User Rating Count" = col_integer(), 
+                                                        "Original Release Date" = col_date("%d/%m/%Y"),
+                                                        "Current Version Release Date" = col_date("%d/%m/%Y")))
+```
+
+### Data Cleaning Process:
+
+Games without Average User Rating values will be dropped\
+Genre tag "Entertainment" and "Games" are ignored from string as it does not provide meaningful insight\
+Games less than 30 User Rating will be dropped to prevent biased ratting from developers\
+The remaining string are extracted and grouped in genres by their characteristics:\
+\* Puzzle = Puzzle/Board\
+\* Adventure = Adventure/Role/Role Playing\
+\* Action = Action\
+\* Family = Family/Education/Trivia\
+\* Simulation = Similation\
+\* Other = Casual/Card
+
+```{r Tidy Data}
+#Cleaning: Drops games without Average User Rating:
+app_game.df <- app_game.df %>% 
+  filter(`Primary Genre` == "Games" | `Primary Genre` == "Entertainment") %>%
+  filter(!is.na(`Average User Rating`))
+#Extract Genres variables into separate columns:
+app_game.df <- app_game.df %>% 
+  extract(Genres,into = "Puzzle",regex = "(Puzzle|Board)",remove = F) %>%
+  extract(Genres,into = "Adventure",regex = "(Adventure|Role|Role Playing)",remove = F) %>%
+  extract(Genres,into = "Action",regex = "(Action)",remove = F) %>%
+  extract(Genres,into = "Family",regex = "(Family|Education|Trivia)",remove = F)%>%
+  extract(Genres,into = "Simulation",regex = "(Simulation)",remove = F)%>%
+  extract(Genres,into = "Others",regex = "(Casual|Card)")
+#Drop Games with less than 30 User Rating and group them into 6 main genres:
+app_game.df <- app_game.df %>% 
+  gather("Puzzle","Adventure","Action","Family","Simulation","Others",key="Genres",value= "cases",na.rm = T)%>%
+  filter(`User Rating Count`> 30)
+app_game.df$cases <- NULL
+app_game.df$`Icon URL` <- NULL
+app_game.df$Subtitle <- NULL
+app_game.df$Description <- NULL
+app_game.df$URL <- NULL
+app_game.df$Languages <- NULL
+#Drop game with 60$ in price:
+app_game.df <- filter(app_game.df, Price < 30)
+#Convert Size Variable from Byte to Megabyte:
+app_game.df$Size <- app_game.df$Size/1000000
+```
+
+## 1. The Landscape of Games on Appstore:
+
+### 1.1 Overall Rating, Price, and Genres:
+
+```{r Genres Distribution}
+#Price, Genres and Avarage Rating
+app_game.df$Genres <- factor(app_game.df$Genres, 
+                             level = c("Action", "Adventure", "Simulation", "Puzzle", "Family", "Others"))
+app_game.df$Games <- ifelse(app_game.df$Price == 0, "Free","Paid")
+genres <- app_game.df %>% group_by(Genres, Games) %>% 
+  dplyr:: summarise(count = n(), rating = mean(`Average User Rating`))
+percent.price <- genres %>% group_by(Genres) %>% 
+  dplyr::mutate(free = round(count/sum(count),2),
+                total = sum(count)/2,
+                rating = round(sum(rating*count/total)/4,2))
+
+ggplot(percent.price) + geom_col(aes(x = Genres, y = total)) + 
+  geom_col(aes(x = Genres, y = count, fill=Games)) + 
+  geom_text(aes(x = Genres, y = count/2, label = paste(free*100,"%")), color = "white") +
+  geom_point(aes(x = Genres, y = rating*600),color = "grey38") +
+  geom_line(aes(x = Genres, y = rating*600, group = 1), color = "grey38") + 
+  geom_text(aes(x = Genres, y = rating*600 + 50, label = rating*2)) + 
+  scale_y_continuous(sec.axis = sec_axis(~./300, name = "Average Rating")) +
+  ylab("Number of Games") + scale_fill_manual(values = c("steelblue","grey38")) +
+  ggtitle("Genres, Number of Games, and Average User Rating")
+```
+
+Puzzle seems to be the most popular genre with more than 1000 games on Appstore, following by Simulation and Adventure games. The least popular game genre is Family game with only around 300 games. Despite being the most popular game genre, Puzzle has the lowest average user rating with just only 4.06/5. The highest average rating belongs to the three Action, Adventure and Family games with 4.22/5.
+
+```{r}
+#Paid vs Free games:
+paid <- app_game.df %>% group_by(Games) %>% dplyr::summarise(Count = n()) %>%
+  mutate(Percent = paste(round(Count/sum(Count),2)*100,"%"))
+price <- app_game.df %>% dplyr::mutate(Price = ifelse(Price == 0, NA, Price)) %>% filter(!is.na(Price))
+price$Price <- ifelse(price$Price < 5, "Under $5", 
+                      ifelse(price$Price < 10, "$5-$10",
+                             ifelse(price$Price < 15, "$10-$15","Over $15")))
+price$Price <- factor(price$Price, levels = c("Under $5","$5-$10","$10-$15","Over $15"))
+price <- price %>% group_by(Price) %>% dplyr::summarise(Count = n()) %>% 
+  mutate(Percent = paste(round(Count/sum(Count),2)*100,"%"))
+app_game.df$In_app <- ifelse(is.na(app_game.df$`In-app Purchases`), "No","Yes")
+in_app <- app_game.df %>% group_by(Games, In_app) %>% dplyr::summarise(Count = n()) %>% group_by(Games) %>%
+  dplyr::mutate(Percent = paste(round(Count/sum(Count),2)*100,"%"))
+in_app <- in_app[,-3]
+#table
+grid.arrange(
+  tableGrob(paid),
+  tableGrob(price),
+  tableGrob(in_app),
+  nrow = 1)
+```
+
+Price Analysis:\
+81% of the games on the market are free to download and play. In the paid game sector, 86% of the games just cost under \$5 for the user to download and play. This percent drops significantly as the price goes up. Free game developers might gain revenue based on advertising and in-app purchases. Accordingly, 77% of the free games have in app purchases service and the rest of them might earn revenue from in-app advertising, compared with 38% and 62% of "yes" and "no" in-app purchases in the paid game sector.
+
+### 1.2 Size Trend and Genres Trend:
+
+```{r Game Size Distribution}
+#Overall
+ggplot(data = app_game.df, aes(x=Size)) + 
+  geom_histogram(binwidth = 50, fill = "steelblue") + ggtitle("Game Size Distribution")
+# Game size by Genres
+ggplot(data = app_game.df, aes(x=Size)) +
+  geom_histogram(fill = "steelblue", binwidth = 100) + facet_wrap(~Genres) + 
+  coord_cartesian(xlim = c(0,1000)) + ggtitle("Game Size by Genres")
+```
+
+The game sizes are mostly under one gigabyte. The Action, Adventure, and Simulation game have higher average size than other genres, assuming the higher demand for graphical and strategical features of the player. The other three genres have similar distribution shape with size highly concentrate in the under 300mb zone.
+
+```{r Size Change Over Time by Genres, message=FALSE}
+app_game.df$Year <- format(app_game.df$`Original Release Date`,"%Y")
+app_game.df %>% group_by(Year, Genres) %>% dplyr::summarise(mean = mean(Size)) %>% 
+  ggplot(aes(x = Year, y = mean, group = Genres, color = Genres)) + geom_line() + geom_point() +
+  ylab("Average Size") + ggtitle("Average Size Change over Time by Genres")
+```
+
+Game sizes increase substantially from 2008 to 2019 (about 12 times on average). Action, Adventure, and Simulation games have the highest average size with around 435mb, 430mb, and 260mb respectively, whereas Family games have a modest average size with around 200mb.
+
+```{r Rating Change over Time by Genres}
+year.rating <- app_game.df %>% 
+  group_by(Year,Genres) %>% 
+  dplyr::summarise(mean.size = mean(`Average User Rating`))
+names(year.rating) <- c("Year","Genres","Rating")
+ggplot(year.rating, aes(x = Year, y = Rating, fill= Genres)) + geom_line(aes(color = Genres),size =1,group = 1) +
+  facet_wrap(.~Genres, ncol = 3) + ylab("Average Rating")+ ggtitle("Rating Change over Time by Genres") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+```
+
+The average user ratings of all genres increase over time. Simulation games have the highest average user rating in 2019 (almost nearly 4.5). Following Simulation games, Adventure and Puzzle games seem to have a stable increase since 2011 with around 4.3 in average rating. On the other hand, Action seems to not have any improvement in terms of customer satisfaction since 2012.
+
+```{r Genres Trend}
+# Genres Trend
+year.rating <- app_game.df %>% 
+  group_by(floor_date(`Original Release Date`,"%Y"), Genres) %>%
+  dplyr::summarise(Count = n())
+names(year.rating) <- c("Year","Genres","Count")
+year.rating <- year.rating[-c(66:71),]
+ggplot(year.rating, aes(x = Year, y = Count, color= Genres)) + geom_line(size = 1) +
+  facet_wrap(.~Genres, ncol = 3) + ylab("Number of Games") + ggtitle("Genres Trend")+
+  theme(axis.text.x = element_text(angle = 40, hjust = 1))
+```
+
+Because this dataset was collect in August 2019, the number of games of each genre for 2019 is incomplete. Therefore, this genre trend analysis will focus on the 2008-2018 period. The Y-axis indicates the number of games introduced on Appstore in a specific year.\
+From the graph, we can see that this is the age of simulation game. Being one of the genres that have the lowest number of games introduced on Apple Appstore in 2008, Simulation becomes the dominant genre with around 120 games introduced in 2018. Action and Adventure games have a similar trend with a substantial increase from 2008 to 2016 and a slight decrease from then. Puzzle genres, being dominant from 2008 to 2015, stepped down its throne and had consistently decreased since 2015.
+
+## 2. Factor Affect User Rating and Rating Count:
+
+### 2.1 Average User Rating:
+
+This analysis divides the size of games into three main categories:\
+1. Under 100mb\
+2. Between 100mb and 300mb\
+3. Over 300mb\
+The size categories can give the developers some ideas about the segments. The "under 100mb" games are the ones aiming to mass market, which just serve the basic needs of entertainment with a modest number of features. The advantage of this category is the ability to reach a large number of users with minimum hardware requirements. The "100mb-300mb" category will focus more on users who are more interested in games than the mass market and require higher technical and graphical gameplays. The last category focus on "game geeks" who demand the extensive graphics aspect and the complexity of the gameplays.
+
+```{r include=FALSE}
+app_game.df$Sizegroup <- ifelse(app_game.df$Size < 100, "Under 100Mb", 
+                      ifelse(app_game.df$Size < 300, "100Mb - 300Mb","Over 300Mb"))
+app_game.df$Sizegroup <- factor(app_game.df$Sizegroup, levels = c("Under 100Mb","100Mb - 300Mb","Over 300Mb"))
+app_game.df$rating <- ifelse(app_game.df$`Average User Rating` < 2, "1", 
+                             ifelse(app_game.df$`Average User Rating` < 3, "2",
+                                    ifelse(app_game.df$`Average User Rating` < 4,"3",
+                                           ifelse(app_game.df$`Average User Rating` < 5,"4","5"))))
+```
+
+```{r User Rating vs Size}
+#Subgroup 1: under 100mb
+app_game.df %>% filter(Sizegroup == "Under 100Mb") %>%
+  ggplot(aes(x=rating, y=Size)) + 
+  geom_boxplot(fill = "steelblue", outlier.color = "firebrick2") +
+  #facet_wrap(.~Genres, nrow = 2) +
+  xlab("Average User Rating") + ylab("Size") +
+  ggtitle("User Rating vs Size (<100mb)")
+```
+
+Although more data are required to generate a more accurate statement about the relationship between the size of games and user ratings, we can have a general idea about this relationship. The advantage of this category is its modest requirement and easy to play. But where is the line between simplicity and under the requirements?\
+From the boxplot graph, games with 4-point and 5-point for rating have higher average size than those with a lower rate. Too small in size might be insufficient for the minimum requirements of the users. In this categorie, games should be 50mb or higher to cover the basic needs of users.
+
+```{r}
+#Subgroup 2: 100mb - 300mb 
+app_game.df %>% filter(Sizegroup == "100Mb - 300Mb") %>%
+  ggplot(aes(x=rating, y=Size)) + 
+  geom_boxplot(fill = "steelblue", outlier.color = "firebrick2") + 
+  xlab("Average User Rating") +
+  ylab("Size")+
+  ggtitle("User Rating vs Size (100Mb - 300Mb)")
+```
+
+With the data in hand, we can not generate a clear statement about the relationship between size and rating for 100mb - 300mb category. The games with 1 rating point seem to be bigger in size. However, the number of games with 1 rating point is very low comparing to other rating categories, so concluding games with a bigger size of this category get a lower rate would be a wrong conclusion. More data need to be collected and analyzed to have a clear and accurate statement.
+
+```{r warning=FALSE}
+#Subgroup 3: over 300mb
+app_game.df %>% filter(Sizegroup == "Over 300Mb") %>%
+  ggplot(aes(x=rating, y=Size)) + 
+  geom_boxplot(fill = "steelblue", outlier.color = "firebrick2") +
+  scale_y_continuous(limits=c(0,1000)) + 
+  xlab("Average User Rating") + ylab("Size")+
+  ggtitle("User Rating vs Size (Over 300Mb)")
+```
+
+Overall, games with 4-point and 5-point seem to have bigger sizes. However, there is a big overlap of the size between the rating of a good game (4 and 5 rating point) and a bad game (below 4 rating point), so we can not generate any conclusion about the effect of size on this size category. More information about features is needed to get a clear view of the effect of size on 100-300mb and over 300mb size categories.
+
+```{r Days Since Last Update and Rating}
+#Create update variables:
+app_game.df$update <- as.numeric(Sys.Date() - app_game.df$`Current Version Release Date`) 
+
+ggplot(app_game.df,aes(x=rating, y = update)) + 
+  geom_boxplot(fill = "steelblue", outlier.color = "firebrick2") +
+  xlab("Average User Rating") + ylab("Number of Days Since Last Update") +
+  ggtitle("Days Since Last Update and User Rating")
+```
+
+The number of days since the last update and the average user rating have a negative relationship. The shorter the period among updates demonstrate the ability of a developer to adapt and modify its games to satisfy the users and market trends. The boxplot shows that "days since last update" of games with 4-point and 5-point are significantly lower (around 750 and 400 days as median respectively) than that of games with 3-point and below.
+
+### 2.2 User Rating Count:
+
+Besides Average User Rating, User Rating Count can be used to determine the number of customers who downloaded the games and actually experienced it (actual users). The following analysis will focus on two main questions:\
+1. Which type of game and size group is performing better in terms of User Rating Count?\
+2. Which genres are good for developers to focus on?
+
+```{r User Rating Count and Game types, warning=FALSE}
+#bubble chart: Free/Paid, User rating, size = user rating count
+ggplot(app_game.df) + 
+  geom_jitter(aes(x = Games, y = `User Rating Count`/1000, color = Games), alpha =0.3) +
+  scale_y_continuous(limits=c(0,500)) + 
+  ylab("Rating Count in Thousand") + facet_grid(.~Sizegroup) + ggtitle("User Rating Count and Game types")
+```
+
+On average, Free games have a higher user rating count than paid games. Among size categories, the "100-300mb" category seems to be the best category for free games with the highest average user rating count than any other category. For paid games, "under 100mb" seem to be the best size categories for developers to focus on.
+
+```{r User Rating Count vs Genres, warning=FALSE}
+ggplot(app_game.df) + 
+  geom_jitter(aes(x = Genres, y = `User Rating Count`/1000, color = Genres), alpha =0.4) +
+  scale_y_continuous(limits=c(0,500)) + 
+  ylab("Rating Count in Thousand") + ggtitle("User Rating Count and Genres")
+```
+
+In terms of user rating count, Action, Adventure, and Simulation are potential genres for developers to focus on with higher average user rating count than others. Family games seem to be the least potential genre with the lowest number of rating count among the six genres.
+
+## 3. Key Takeaways and Recommendations:
+
+### 3.1 Key Takeaways:
+
+1.  Puzzle games are dominating the Appstore game market with the highest number of games (more than 1000 games).\
+2.  On average from 2008-2019, Action, Adventure, and Family genres have the highest average user rating with 4.22 point.\
+3.  Simulation is the rising star with a consistent increase in both the average user rating point and the number of game introduced per year in the last decade.\
+4.  Overall, the sizes of games on the market increase dramatically since 2008 (12 times on average).\
+5.  For the type of games, Free game seems to dominate the market with 81% coverage.
+
+### 3.2 Recommendation:
+
+1.  Action, Adventure, and Simulation are good genres for developers to focus on in terms of user rating count and customer trend, especially Simulation with the highest increase in bot average user rating and the number of new games introduced.\
+2.  For the type of game, Free game seems to be the better category to focus on with a significantly higher average user rating count. The revenue for free games can be generated by advertising and in-app purchases.\
+3.  For the size category, in term of user rating count, "100-300mb" seem to be the best category for free games and "under-100mb" category is good for developers who want to focus on paid games.
