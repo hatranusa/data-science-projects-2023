@@ -1,10 +1,8 @@
 # 2019 Revenue Analysis on Apple Mobile Games
 Code Author: Ha Phuong Tran
 
-Goal:
 At the close of 2019, the mobile gaming industry achieved a noteworthy $68.5 billion, representing 45% of the global game market. To fully capitalize on the immense opportunities within this market, game developers necessitate a comprehensive market overview. The primary aim of this project is unveil the variables that could potentially influence game revenue. This determination will be facilitated by two pivotal metrics: the average user rating and the rating count.
 
-ETL Process:
 Games lacking average user rating values will be excluded from the analysis. The genre tags "Entertainment" and "Games" will be disregarded as they do not contribute meaningful insights. Games with fewer than 30 user ratings will also be omitted to prevent biased ratings from developers. The remaining data will be parsed and categorized into genres based on their characteristics:
 - Puzzle: Includes Puzzle and Board games.
 - Adventure: Encompasses Adventure, Role, and Role Playing games.
