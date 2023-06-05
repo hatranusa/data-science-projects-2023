@@ -1,4 +1,4 @@
-# LIST OF DATA SCIENCE PROJECTS
+# LIST OF PROJECTS
 
 ## Apple Mobile Game (2019)
 Data Source: https://www.kaggle.com/datasets/tristan581/17k-apple-app-store-strategy-games
